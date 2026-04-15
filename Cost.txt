@@ -1,0 +1,21 @@
+1. Nhóm dịch vụ "An toàn" (Free Tier hoặc Pay-per-use)
+S3 (Data Lake): Nằm trong AWS Free Tier (5GB đầu tiên). Nếu vượt quá, chi phí cực rẻ ($0.023/GB).
+AWS Lambda (Orchestrator): Rất an toàn. Free Tier cho 1 triệu request mỗi tháng. Chỉ tính tiền khi code chạy.
+IAM / CDK: Miễn phí hoàn toàn.
+Amazon Bedrock (AI Engine): Pay-per-token. Bạn chỉ trả tiền cho số chữ (token) mà bạn gửi đi và nhận về từ Claude 3/Llama 3. Không dùng không tốn tiền.
+2. Nhóm dịch vụ "Cần cẩn thận" (Chi phí duy trì cố định)
+Đây là những dịch vụ tính tiền theo giờ ngay khi bạn vừa cdk deploy thành công:
+Amazon OpenSearch Serverless (Vector DB):
+Nó tính phí theo OCU (OpenSearch Compute Unit). Mức tối thiểu là 0.5 OCU cho tìm kiếm và 0.5 OCU cho lập chỉ mục.
+Chi phí: Khoảng $0.24/giờ (~$170/tháng).
+Mẹo Demo: Chỉ deploy khi làm, xong việc thì cdk destroy ngay.
+Amazon MSK (Managed Streaming for Kafka):
+Dù dùng Serverless hay Dedicated, chi phí cũng khá cao (từ ~$0.20/giờ trở lên).
+Giải pháp cho Demo: Nếu chỉ để test, chúng ta có thể thay Kafka bằng Amazon Kinesis Data Streams (Rẻ hơn nhiều, có chế độ On-demand) hoặc dùng Lambda gọi trực tiếp để giả lập dữ liệu IoT đổ vào OpenSearch.
+Apache Flink (Managed Service for Apache Flink):
+Tính theo KPU (Kinesis Processing Unit). Khoảng $0.11/giờ.
+Chiến lược tối ưu chi phí cho bản Demo (Architect Strategy):
+Để bạn vẫn có một kiến trúc "Khủng" để đi phỏng vấn mà không bị "cháy túi", mình đề xuất lộ trình Lean Architecture như sau:
+Giai đoạn Build & Test: Dùng S3 + Lambda + Bedrock. Tổng chi phí gần như bằng 0.
+Giai đoạn Vector Search: Dùng OpenSearch Serverless nhưng chỉ bật lên khi cần quay Video Demo hoặc Show cho nhà tuyển dụng, sau đó dùng lệnh cdk destroy để xóa sạch tài nguyên tránh phát sinh phí qua đêm.
+Giai đoạn Real-time (Kafka): Thay vì dùng MSK thật, mình sẽ hướng dẫn bạn dùng Amazon EventBridge hoặc Kinesis (Chi phí cực thấp) để mô phỏng luồng dữ liệu Kafka. Trong CV bạn vẫn ghi là Kafka (vì logic xử lý Event-driven là tương đương).
