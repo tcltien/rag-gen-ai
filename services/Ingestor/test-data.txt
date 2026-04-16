@@ -1,0 +1,52 @@
+=====================================================
+HỆ THỐNG QUẢN LÝ IOT TRUNG TÂM - TÀI LIỆU KỸ THUẬT V2.1
+=====================================================
+
+CHƯƠNG 1: THIẾT LẬP PHẦN CỨNG (HARDWARE)
+Smart Gateway v2.0 hỗ trợ tối đa 128 thiết bị con (end-devices). 
+Sử dụng nguồn điện 5V-2A qua cổng USB-C. 
+Lưu ý: Không đặt Gateway gần lò vi sóng hoặc các thiết bị phát sóng 2.4GHz công suất lớn để tránh nhiễu tín hiệu Zigbee.
+Khoảng cách truyền tải tối ưu: 
+- Trong nhà: 20-30m (xuyên tối đa 2 lớp tường gạch).
+- Ngoài trời: 100m (không vật cản).
+
+CHƯƠNG 2: QUY ĐỊNH VỀ TÀI KHOẢN VÀ BẢO MẬT
+Tất cả thiết bị xuất xưởng đều có tài khoản quản trị mặc định:
+- Username: admin
+- Password: admin123
+Cổng truy cập Web Config: 80 hoặc 8080.
+Cổng bảo mật SSL: 443.
+Giao thức MQTT yêu cầu chứng chỉ TLS v1.2 để kết nối với AWS IoT Core. 
+Topic mặc định để nhận lệnh: devices/+/commands.
+
+CHƯƠNG 3: CÁC LOẠI CẢM BIẾN HỖ TRỢ
+1. Cảm biến nhiệt độ & độ ẩm (Model: TH-01):
+   - Dải đo: -20°C đến 60°C.
+   - Sai số: ±0.5°C.
+   - Pin: CR2032 (Tuổi thọ 12 tháng).
+2. Cảm biến chuyển động (Model: PIR-05):
+   - Góc quét: 120 độ.
+   - Khoảng cách phát hiện: 7m.
+3. Cảm biến rò rỉ nước (Model: WL-10):
+   - Cảnh báo tức thì qua còi buzzer tích hợp.
+
+CHƯƠNG 4: HƯỚNG DẪN XỬ LÝ SỰ CỐ (TROUBLESHOOTING)
+Lỗi E01 - Gateway không nhận IP:
+- Kiểm tra cáp LAN hoặc cấu hình Wi-Fi.
+- Đảm bảo router đang bật DHCP.
+Lỗi E02 - Cảm biến ngoại tuyến (Offline):
+- Nhấn nút trên cảm biến 1 lần để kiểm tra LED. Nếu không sáng -> Hết pin.
+- Nếu LED nháy đỏ -> Mất kết nối với Gateway, cần thực hiện Pair lại.
+Lỗi E03 - Không đẩy được dữ liệu lên Cloud:
+- Kiểm tra kết nối Internet của Gateway.
+- Kiểm tra chính sách (Policy) của certificate trên AWS IoT Core.
+
+CHƯƠNG 5: CẬP NHẬT FIRMWARE (OTA)
+Quy trình cập nhật diễn ra hoàn toàn tự động qua Cloud. 
+Khi đèn LED chuyển màu VÀNG, tuyệt đối không ngắt nguồn điện.
+Quá trình thường mất từ 3-5 phút tùy vào tốc độ mạng. 
+Sau khi cập nhật xong, thiết bị sẽ tự khởi động lại (Reboot).
+
+CHƯƠNG 6: CHÍNH SÁCH BẢO HÀNH
+Sản phẩm được bảo hành 12 tháng kể từ ngày kích hoạt trên hệ thống. 
+Không bảo hành đối với các trường hợp cháy nổ do dùng sai nguồn điện hoặc rơi vào nước.

@@ -1,78 +1,127 @@
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
-import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-import { Client } from 'pg';
+import { HNSWLib } from "@langchain/community/vectorstores/hnswlib";
+import * as fs from "fs";
+import * as path from "path";
+import { Embeddings } from "@langchain/core/embeddings";
 
 const s3 = new S3Client({});
-const bedrock = new BedrockRuntimeClient({ region: process.env.REGION });
-const secrets = new SecretsManagerClient({ region: process.env.REGION });
+const TMP_DIR = "/tmp/iot_index";
+const bedrockRuntime = new BedrockRuntimeClient({ region: process.env.REGION || "ap-southeast-1" });
+
+class CohereEmbeddingsV3 extends Embeddings {
+    constructor() {
+        super({});
+    }
+
+    async embedDocuments(texts: string[]): Promise<number[][]> {
+        if (texts.length === 0) return [];
+
+        const response = await bedrockRuntime.send(
+            new InvokeModelCommand({
+                modelId: "cohere.embed-multilingual-v3",
+                contentType: "application/json",
+                accept: "application/json",
+                body: JSON.stringify({
+                    texts: texts,
+                    input_type: "search_document",   // ingestion
+                    truncate: "NONE"
+                })
+            })
+        );
+
+        // const body = JSON.parse(Buffer.from(response.body).toString());
+        // return body.embeddings;
+        const responseStr = Buffer.from(response.body).toString('utf-8');
+        let body;
+        try {
+            body = JSON.parse(responseStr);
+        } catch (e) {
+            console.error("❌ Failed to parse response as JSON:", responseStr.substring(0, 500));
+            throw new Error("Invalid JSON response from Bedrock");
+        }
+
+        if (!body.embeddings || !Array.isArray(body.embeddings)) {
+            console.error("❌ Unexpected response from Cohere:", JSON.stringify(body, null, 2));
+            throw new Error(`Invalid response from Cohere Embed: missing 'embeddings' field. Got: ${Object.keys(body)}`);
+        }
+
+        return body.embeddings;
+    }
+
+    async embedQuery(text: string): Promise<number[]> {
+        const response = await bedrockRuntime.send(
+            new InvokeModelCommand({
+                modelId: "cohere.embed-multilingual-v3",
+                contentType: "application/json",
+                accept: "application/json",
+                body: JSON.stringify({
+                    texts: [text],
+                    input_type: "search_query",     // query
+                    truncate: "NONE"
+                })
+            })
+        );
+
+        // const body = JSON.parse(Buffer.from(response.body).toString());
+        // return body.embeddings[0];
+        const responseStr = Buffer.from(response.body).toString('utf-8');
+        let body;
+        try {
+            body = JSON.parse(responseStr);
+        } catch (e) {
+            console.error("❌ Failed to parse response:", responseStr.substring(0, 300));
+            throw new Error("Invalid JSON response from Bedrock");
+        }
+
+        if (!body.embeddings || !Array.isArray(body.embeddings) || body.embeddings.length === 0) {
+            console.error("❌ Unexpected embedQuery response:", JSON.stringify(body, null, 2));
+            throw new Error("No embeddings returned from Cohere");
+        }
+
+        return body.embeddings[0];
+    }
+}
 
 export const handler = async (event: any) => {
-    // Get file from S3
-    const bucket = event.Records[0].s3.bucket.name;
-    const key = decodeURIComponent(event.Records[0].s3.object.key.replace(/\+/g, ' '));
-    console.log(`Processing file: ${key} from bucket: ${bucket}`);
-
-    let dbClient;
+    if (!event.Records && !event.bucket) {
+        console.warn("Invalid Trigger: Lambda was called without S3 Records or bucket param.");
+        return { statusCode: 400, body: "Missing S3 event data" };
+    }
     try {
-        // 2. get config from Secrets Manager
-        const secretResponse = await secrets.send(new GetSecretValueCommand({ SecretId: process.env.DB_SECRET_ARN }));
-        const dbConfig = JSON.parse(secretResponse.SecretString!);
-        dbClient = new Client({
-            host: dbConfig.host,
-            port: dbConfig.port,
-            user: dbConfig.username,
-            password: dbConfig.password,
-            database: dbConfig.dbname,
-            ssl: { rejectUnauthorized: false } // RDS need SSL
-        });
-        await dbClient.connect();
+        // Get file from S3
+        const bucket = event.Records[0].s3.bucket.name;
+        const key = decodeURIComponent(event.Records[0].s3.object.key.replace(/\+/g, ' '));
+        console.log(`Processing file: ${key} from bucket: ${bucket}`);
 
         // 3. read file text from S3
         const s3Response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
         const fullText = await s3Response.Body?.transformToString()!;
         if (!fullText) throw new Error("File trống rỗng!");
         // 4. Chunking 
-        const chunkingData = new RecursiveCharacterTextSplitter({
-            chunkSize: 800,   // take  2-3 paragraph
-            chunkOverlap: 100, // Get more to keep story
-        });
-        const chunks = await chunkingData.splitText(fullText);
-        console.log(`📦 Đã chia thành ${chunks.length} chunks`);
-        // 5. Loop chunk to get Vector and Insert
-        for (const chunk of chunks) {
-            // call Bedrock Titan v2
-            const bedrockRes = await bedrock.send(new InvokeModelCommand({
-                modelId: "cohere.embed-multilingual-v3",
-                contentType: "application/json",
-                accept: "application/json",
-                body: JSON.stringify({
-                    texts: [chunk],
-                    input_type: "search_document", // for Ingestion
-                    truncate: "NONE"
-                })
-            }));
+        const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 200, chunkOverlap: 50 });
+        const docs = await splitter.createDocuments([fullText]);
 
-            const resBody = JSON.parse(new TextDecoder().decode(bedrockRes.body));
-            const embedding = resBody.embeddings[0];
+        const embeddings = new CohereEmbeddingsV3();
 
-            // Save RDS pgvector
-            // Note: embedding in SQL must format'[0.1, 0.2, ...]'
-            const vectorString = `[${embedding.join(',')}]`;
+        const vectorStore = await HNSWLib.fromDocuments(docs, embeddings);
+        if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR);
+        await vectorStore.save(TMP_DIR);
 
-            await dbClient.query(
-                'INSERT INTO doc_vectors (content, embedding, metadata) VALUES ($1, $2, $3)',
-                [chunk, vectorString, JSON.stringify({ source: key, timestamp: new Date().toISOString(), model: "cohere-multilingual-v3" })]
-            );
+        const indexFiles = ["args.json", "docstore.json", "hnswlib.index"];
+        for (const fileName of indexFiles) {
+            await s3.send(new PutObjectCommand({
+                Bucket: bucket,
+                Key: `indices/iot_index/${fileName}`,
+                Body: fs.readFileSync(path.join(TMP_DIR, fileName))
+            }))
         }
-        console.log("Ingestion successful!");
-        return { status: "success" };
+        console.log(`Ingested ${docs.length} chunks from ${key}`);
+        return { status: "success", count: docs.length };
 
     } catch (error) {
-        console.error("❌ Lỗi:", error);
+        console.error("Lỗi:", error);
         throw error;
-    } finally {
-        if (dbClient) await dbClient.end();
     }
 }
